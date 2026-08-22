@@ -12,5 +12,7 @@ Each bit of the DDRx register controls one GPIO pin.
 DDRx
 
 Bit:  7   6   5   4   3   2   1   0
+
       ↓   ↓   ↓   ↓   ↓   ↓   ↓   ↓
+      
      Px7 Px6 Px5 Px4 Px3 Px2 Px1 Px0
