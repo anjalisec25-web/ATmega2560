@@ -7,5 +7,6 @@ void TIMER_Stop(void);
 unsigned char TIMER_GetOverflowFlag(void);
 void TIMER_ClearOverflowFlag(void);
 void TIMER_DelayUs(unsigned int microseconds);
+unsigned long TIMER_GetMs(void);
 
 #endif

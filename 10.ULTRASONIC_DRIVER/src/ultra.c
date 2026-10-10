@@ -1,195 +1,118 @@
 #include "ultra.h"
 #include "gpio.h"
 #include "timer.h"
-
-/* ================================
-   Ultrasonic Configuration
-   ================================ */
+#include <stdint.h>
 
 #define ULTRA_PORT       GPIO_PORT_B
-
 #define ULTRA_TRIG_PIN   0
 #define ULTRA_ECHO_PIN   1
 
 
-/* ================================
-   Timer3 Registers
-   ================================ */
 
 #define TCCR3A   (*(volatile unsigned char *)0x90)
 #define TCCR3B   (*(volatile unsigned char *)0x91)
-
 #define TCNT3L   (*(volatile unsigned char *)0x94)
 #define TCNT3H   (*(volatile unsigned char *)0x95)
-
 #define TIFR3    (*(volatile unsigned char *)0x38)
 
 #define CS30     0
 #define CS31     1
 #define CS32     2
-
 #define TOV3     0
 
+#define ULTRA_TIMEOUT_TICKS   7500U
+#define ULTRA_MAX_CM          400UL
 
-/* ================================
-   ULTRA_Init
-   ================================ */
-
-void ULTRA_Init(void)
+static uint16_t ULTRA_ReadTimer(void)
 {
-    /* TRIG -> OUTPUT */
-    GPIO_SetDirection(
-        ULTRA_PORT,
-        ULTRA_TRIG_PIN,
-        GPIO_OUTPUT
-    );
+uint8_t low;
+uint8_t high;
 
-    /* ECHO -> INPUT */
-    GPIO_SetDirection(
-        ULTRA_PORT,
-        ULTRA_ECHO_PIN,
-        GPIO_INPUT
-    );
+low  = TCNT3L;
+high = TCNT3H;
 
-    /* TRIG initially LOW */
-    GPIO_WritePin(
-        ULTRA_PORT,
-        ULTRA_TRIG_PIN,
-        GPIO_LOW
-    );
+return (uint16_t)(((uint16_t)high << 8) | low);
 
-    /* Timer3 Normal Mode */
-    TCCR3A = 0x00;
-    TCCR3B = 0x00;
 
-    /* Clear Timer3 counter */
-    TCNT3H = 0x00;
-    TCNT3L = 0x00;
-
-    /* Clear overflow flag */
-    TIFR3 |= (1 << TOV3);
 }
 
 
-/* ================================
-   ULTRA_GetDistance
-   ================================ */
+void ULTRA_Init(void)
+{
+GPIO_SetDirection(
+ULTRA_PORT,
+ULTRA_TRIG_PIN,
+GPIO_OUTPUT
+);
+
+GPIO_SetDirection(
+    ULTRA_PORT,
+    ULTRA_ECHO_PIN,
+    GPIO_INPUT
+);
+
+GPIO_WritePin(
+    ULTRA_PORT,
+    ULTRA_TRIG_PIN,
+    GPIO_LOW
+);
+
+TCCR3A = 0x00;
+TCCR3B = 0x00;
+TCNT3H = 0x00;
+TCNT3L = 0x00;
+
+TIFR3 = (1 << TOV3);
+TCCR3B = (1 << CS31) | (1 << CS30);
+}
 
 uint16_t ULTRA_GetDistance(void)
 {
-    uint16_t count;
-    uint16_t distance;
-    uint32_t timeout;
+uint16_t start;
+uint16_t rise;
+uint16_t fall;
+uint16_t ticks;
+uint32_t distance;
+
+start = ULTRA_ReadTimer();
+
+while (GPIO_ReadPin(ULTRA_PORT, ULTRA_ECHO_PIN) == GPIO_HIGH)
+{
+    if ((uint16_t)(ULTRA_ReadTimer() - start) >= ULTRA_TIMEOUT_TICKS)
+        return 0;
+}
 
 
-    /* ============================
-       Send 10 us Trigger Pulse
-       ============================ */
+GPIO_WritePin(ULTRA_PORT, ULTRA_TRIG_PIN, GPIO_LOW);
+TIMER_DelayUs(2);
 
-    GPIO_WritePin(
-        ULTRA_PORT,
-        ULTRA_TRIG_PIN,
-        GPIO_LOW
-    );
+GPIO_WritePin(ULTRA_PORT, ULTRA_TRIG_PIN, GPIO_HIGH);
+TIMER_DelayUs(10);
 
-    TIMER_DelayUs(2);
+GPIO_WritePin(ULTRA_PORT, ULTRA_TRIG_PIN, GPIO_LOW);
 
-    GPIO_WritePin(
-        ULTRA_PORT,
-        ULTRA_TRIG_PIN,
-        GPIO_HIGH
-    );
+start = ULTRA_ReadTimer();
 
-    TIMER_DelayUs(10);
+while (GPIO_ReadPin(ULTRA_PORT, ULTRA_ECHO_PIN) == GPIO_LOW)
+{
+    if ((uint16_t)(ULTRA_ReadTimer() - start) >= ULTRA_TIMEOUT_TICKS)
+        return 0;
+}
 
-    GPIO_WritePin(
-        ULTRA_PORT,
-        ULTRA_TRIG_PIN,
-        GPIO_LOW
-    );
+rise = ULTRA_ReadTimer();
 
+while (GPIO_ReadPin(ULTRA_PORT, ULTRA_ECHO_PIN) == GPIO_HIGH)
+{
+    if ((uint16_t)(ULTRA_ReadTimer() - rise) >= ULTRA_TIMEOUT_TICKS)
+        return 0;
+}
 
-    /* ============================
-       Wait for ECHO HIGH
-       ============================ */
+fall = ULTRA_ReadTimer();
+ticks = (uint16_t)(fall - rise);
+distance = (((uint32_t)ticks * 4UL) + 29UL) / 58UL;
 
-    timeout = 0;
+if (distance > ULTRA_MAX_CM)
+    return 0;
 
-    while(GPIO_ReadPin(ULTRA_PORT, ULTRA_ECHO_PIN) == GPIO_LOW)
-    {
-        timeout++;
-
-        if(timeout > 60000)
-            return 0;
-    }
-
-
-    /* ============================
-       Start Timer3
-       Prescaler = 64
-       ============================ */
-
-    TCNT3H = 0x00;
-    TCNT3L = 0x00;
-
-    TIFR3 |= (1 << TOV3);
-
-    TCCR3B |= (1 << CS31) | (1 << CS30);
-
-
-    /* ============================
-       Wait for ECHO LOW
-       ============================ */
-
-    timeout = 0;
-
-    while(GPIO_ReadPin(ULTRA_PORT, ULTRA_ECHO_PIN) == GPIO_HIGH)
-    {
-        timeout++;
-
-        if(timeout > 60000)
-        {
-            TCCR3B &= ~((1 << CS32) |
-                        (1 << CS31) |
-                        (1 << CS30));
-
-            return 0;
-        }
-    }
-
-
-    /* ============================
-       Stop Timer3
-       ============================ */
-
-    TCCR3B &= ~((1 << CS32) |
-                (1 << CS31) |
-                (1 << CS30));
-
-
-    /* ============================
-       Read Timer3 Count
-       ============================ */
-
-    count = ((uint16_t)TCNT3H << 8) | TCNT3L;
-
-
-    /* ============================
-       Calculate Distance
-       ============================
-
-       CPU Clock = 16 MHz
-       Prescaler = 64
-
-       Timer frequency = 250 kHz
-       1 timer tick = 4 us
-
-       Distance(cm) = Time(us) / 58
-
-       Distance = (count * 4) / 58
-    */
-
-    distance = (uint16_t)(((uint32_t)count * 4) / 58);
-
-    return distance;
+return (uint16_t)distance;
 }
