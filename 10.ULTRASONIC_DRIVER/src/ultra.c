@@ -7,8 +7,6 @@
 #define ULTRA_TRIG_PIN   0
 #define ULTRA_ECHO_PIN   1
 
-
-
 #define TCCR3A   (*(volatile unsigned char *)0x90)
 #define TCCR3B   (*(volatile unsigned char *)0x91)
 #define TCNT3L   (*(volatile unsigned char *)0x94)
@@ -32,8 +30,6 @@ low  = TCNT3L;
 high = TCNT3H;
 
 return (uint16_t)(((uint16_t)high << 8) | low);
-
-
 }
 
 
